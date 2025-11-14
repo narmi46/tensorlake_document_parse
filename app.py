@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from tabulate import tabulate
 import os
 import tempfile
+import pandas as pd
 
 
 # ------------------ Helpers ------------------
@@ -140,8 +141,11 @@ if uploaded_pdf and api_key:
             st.subheader(f"📊 Table {t_index}")
 
             matrix = html_table_to_matrix(table)
-            readable = tabulate(matrix[1:], headers=matrix[0], tablefmt="grid")
-            st.text(readable)
+            df = pd.DataFrame(matrix[1:], columns=matrix[0])
+            st.table(df)
+            
+            #readable = tabulate(matrix[1:], headers=matrix[0], tablefmt="grid")
+            #st.text(readable)
 
             # For JSON export
             table_obj = {

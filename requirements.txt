@@ -3,3 +3,4 @@ tensorlake
 bs4
 tabulate
 pandas
+beautifulsoup4

@@ -14,7 +14,7 @@ from tabulate import tabulate
 import os
 import tempfile
 import pandas as pd
-import httpx  # <-- NEW: for catching HTTPStatusError
+import httpx  # for catching upload errors
 
 
 # ------------------ Helpers ------------------
@@ -27,8 +27,24 @@ def clean_number(value):
         return value
 
 
+def fix_duplicate_headers(headers):
+    """Make column names unique (fixes Streamlit / Arrow crash)."""
+    seen = {}
+    fixed = []
+
+    for h in headers:
+        key = h if h.strip() != "" else "col"
+        if key not in seen:
+            seen[key] = 1
+            fixed.append(key)
+        else:
+            seen[key] += 1
+            fixed.append(f"{key}_{seen[key]}")
+    return fixed
+
+
 def html_table_to_matrix(table):
-    """Convert HTML <table> → matrix of rows."""
+    """Convert HTML <table> → matrix (list of lists)."""
     rows = table.find_all("tr")
     matrix = []
     for row in rows:
@@ -40,7 +56,7 @@ def html_table_to_matrix(table):
 def html_table_to_objects(table):
     """Convert HTML table to structured dictionaries for JSON."""
     matrix = html_table_to_matrix(table)
-    if not matrix:
+    if not matrix or len(matrix) < 2:
         return []
 
     header = matrix[0]
@@ -72,17 +88,18 @@ def html_table_to_objects(table):
 # ------------------ Streamlit UI ------------------
 
 st.set_page_config(page_title="PDF Parser", layout="wide")
-st.title("📄 PDF Table & Text Extractor")
-st.write("Upload a PDF and extract **clean text + tables** using Tensorlake DocumentAI.")
+st.title("📄 PDF Table & Text Extractor (Tensorlake)")
+st.write("Upload a PDF and extract **clean text + structured tables** using Tensorlake DocumentAI.")
 
 api_key = st.text_input("🔑 Enter Tensorlake API Key", type="password")
 
 uploaded_pdf = st.file_uploader("Upload PDF file", type=["pdf"])
 
 if uploaded_pdf and api_key:
+
     # --- Basic API key format validation ---
     if not api_key.startswith("tl_apiKey_"):
-        st.error("❌ The API key does not look like a valid Tensorlake key (should start with `tl_apiKey_`).")
+        st.error("❌ Invalid API key format. Must start with `tl_apiKey_`.")
         st.stop()
 
     st.info("Processing your PDF...")
@@ -96,20 +113,19 @@ if uploaded_pdf and api_key:
         # Init DocumentAI
         doc_ai = DocumentAI(api_key=api_key)
 
-        # Upload file with error handling
-        with st.spinner("📤 Uploading file to Tensorlake..."):
+        # Upload file to Tensorlake
+        with st.spinner("📤 Uploading file..."):
             try:
                 file_id = doc_ai.upload(temp_pdf_path)
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
                 if status in (401, 403):
-                    st.error("❌ Authentication failed (HTTP "
-                             f"{status}). Please check that your API key is correct and has access rights.")
+                    st.error("❌ Invalid API key or insufficient permissions.")
                 else:
-                    st.error(f"❌ File upload failed with HTTP {status}: {e}")
+                    st.error(f"❌ Upload failed (HTTP {status}): {e}")
                 st.stop()
             except Exception as e:
-                st.error(f"❌ Unexpected error during upload: {e}")
+                st.error(f"❌ Upload error: {e}")
                 st.stop()
 
         # Configure parsing
@@ -126,7 +142,7 @@ if uploaded_pdf and api_key:
         )
 
         # Parse
-        with st.spinner("🔍 Parsing PDF with DocumentAI..."):
+        with st.spinner("🔍 Parsing PDF..."):
             result = doc_ai.parse_and_wait(
                 file_id,
                 parsing_options=parsing_options,
@@ -150,29 +166,33 @@ if uploaded_pdf and api_key:
             soup = BeautifulSoup(page_text, "html.parser")
             tables = soup.find_all("table")
 
-            # Remove tables from page text so we don't see raw table text
+            # Remove tables before extracting text (prevents ugly unstructured table text)
             for tbl in tables:
                 tbl.extract()
 
-            text_without_tables = soup.get_text("\n", strip=True)
-            full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_without_tables}\n\n"
+            text_clean = soup.get_text("\n", strip=True)
+            full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
 
             st.subheader("📝 Extracted Text")
-            st.text(text_without_tables)
+            st.text(text_clean)
 
-            # Display tables
+            # Display extracted tables
             for t_index, table in enumerate(tables, start=1):
+
                 st.subheader(f"📊 Table {t_index}")
 
                 matrix = html_table_to_matrix(table)
                 if not matrix or len(matrix) < 2:
-                    st.write("_Empty or malformed table_")
+                    st.write("_⚠️ Empty or malformed table_")
                     continue
 
-                df = pd.DataFrame(matrix[1:], columns=matrix[0])
+                # FIX duplicate column names
+                headers = fix_duplicate_headers(matrix[0])
+                df = pd.DataFrame(matrix[1:], columns=headers)
+
                 st.table(df)
 
-                # For JSON export
+                # Store in JSON
                 table_obj = {
                     "page": i,
                     "table_index": t_index,
@@ -184,8 +204,10 @@ if uploaded_pdf and api_key:
         txt_bytes = full_text_output.encode("utf-8")
         json_bytes = json.dumps(all_tables_json, indent=4).encode("utf-8")
 
+        st.success("✅ Extraction completed!")
+
         st.download_button(
-            label="📥 Download Extracted Text (TXT)",
+            label="📥 Download Full Text (TXT)",
             data=txt_bytes,
             file_name="document.txt",
             mime="text/plain"
@@ -199,9 +221,9 @@ if uploaded_pdf and api_key:
         )
 
     finally:
-        # Clean up temp file
+        # Remove temp file
         if os.path.exists(temp_pdf_path):
             os.remove(temp_pdf_path)
 
 else:
-    st.warning("Please upload a PDF and provide your API key.")
+    st.warning("Upload a PDF + enter API key to continue.")

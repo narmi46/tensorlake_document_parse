@@ -154,7 +154,8 @@ if uploaded_pdf and api_key:
             st.stop()
 
         # Storage for outputs
-        full_text_output = ""
+        full_text_output = ""          # text only
+        full_text_with_tables = ""     # text + human-readable tables
         all_tables_json = {"tables": []}
 
         # ------------------ Process Pages ------------------
@@ -171,7 +172,12 @@ if uploaded_pdf and api_key:
                 tbl.extract()
 
             text_clean = soup.get_text("\n", strip=True)
+
+            # Add to text-only output
             full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
+
+            # Add to text+tables output (text part)
+            full_text_with_tables += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
 
             st.subheader("📝 Extracted Text")
             st.text(text_clean)
@@ -190,7 +196,12 @@ if uploaded_pdf and api_key:
                 headers = fix_duplicate_headers(matrix[0])
                 df = pd.DataFrame(matrix[1:], columns=headers)
 
+                # Show in Streamlit UI
                 st.table(df)
+
+                # Also add a human-readable table into full_text_with_tables
+                readable_table = tabulate(matrix[1:], headers=headers, tablefmt="grid")
+                full_text_with_tables += readable_table + "\n\n"
 
                 # Store in JSON
                 table_obj = {
@@ -201,15 +212,23 @@ if uploaded_pdf and api_key:
                 all_tables_json["tables"].append(table_obj)
 
         # ------------------ Provide Downloads ------------------
-        txt_bytes = full_text_output.encode("utf-8")
+        text_only_bytes = full_text_output.encode("utf-8")
+        text_with_tables_bytes = full_text_with_tables.encode("utf-8")
         json_bytes = json.dumps(all_tables_json, indent=4).encode("utf-8")
 
         st.success("✅ Extraction completed!")
 
         st.download_button(
-            label="📥 Download Full Text (TXT)",
-            data=txt_bytes,
+            label="📥 Download Full Text (TXT – no tables)",
+            data=text_only_bytes,
             file_name="document.txt",
+            mime="text/plain"
+        )
+
+        st.download_button(
+            label="📥 Download Text + Tables (Readable TXT)",
+            data=text_with_tables_bytes,
+            file_name="document_with_tables.txt",
             mime="text/plain"
         )
 

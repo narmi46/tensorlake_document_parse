@@ -1,0 +1,4 @@
+streamlit
+tensorlake
+bs4
+tabulate

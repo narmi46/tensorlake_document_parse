@@ -14,7 +14,7 @@ from tabulate import tabulate
 import os
 import tempfile
 import pandas as pd
-import httpx
+import httpx  # for catching upload errors
 
 
 # ------------------ FIXED API KEY ------------------
@@ -83,142 +83,141 @@ def html_table_to_objects(table):
     return objects
 
 
-
 # ------------------ Streamlit UI ------------------
 
 st.set_page_config(page_title="PDF Parser", layout="wide")
-st.title("📄 Multi-PDF Table & Text Extractor (Tensorlake DocumentAI)")
-st.write("Upload **one or many PDFs** and extract clean text + structured tables.")
+st.title("📄 PDF Table & Text Extractor (Tensorlake)")
+st.write("Upload a PDF and extract **clean text + structured tables** using Tensorlake DocumentAI.")
 
-uploaded_pdfs = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
+uploaded_pdf = st.file_uploader("Upload PDF file", type=["pdf"])
 
+# ------------------------------------------
+# REMOVE API KEY INPUT – ALWAYS USE FIXED KEY
+# ------------------------------------------
 
-if uploaded_pdfs:
+if uploaded_pdf:
 
-    # Initialize DocumentAI once
-    doc_ai = DocumentAI(api_key=API_KEY)
+    st.info("Processing your PDF...")
 
-    for uploaded_pdf in uploaded_pdfs:
+    # Save uploaded file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_pdf.read())
+        temp_pdf_path = tmp.name
 
-        st.divider()
-        st.header(f"📌 Processing: {uploaded_pdf.name}")
+    try:
+        # Init DocumentAI with pre-set API key
+        doc_ai = DocumentAI(api_key=API_KEY)
 
-        # Save to temp
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(uploaded_pdf.read())
-            temp_pdf_path = tmp.name
+        # Upload file to Tensorlake
+        with st.spinner("📤 Uploading file..."):
+            try:
+                file_id = doc_ai.upload(temp_pdf_path)
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                st.error(f"❌ Upload failed (HTTP {status}): {e}")
+                st.stop()
+            except Exception as e:
+                st.error(f"❌ Upload error: {e}")
+                st.stop()
 
-        try:
-            with st.spinner("📤 Uploading..."):
-                try:
-                    file_id = doc_ai.upload(temp_pdf_path)
-                except httpx.HTTPStatusError as e:
-                    st.error(f"❌ Upload failed ({e.response.status_code}) for {uploaded_pdf.name}")
+        # Configure parsing
+        parsing_options = ParsingOptions(
+            chunking_strategy=ChunkingStrategy.PAGE,
+            table_output_mode=TableOutputMode.HTML,
+            signature_detection=False,
+            disable_layout_detection=True,
+        )
+
+        enrichment_options = EnrichmentOptions(
+            figure_summarization=False,
+            table_summarization=False
+        )
+
+        with st.spinner("🔍 Parsing PDF..."):
+            result = doc_ai.parse_and_wait(
+                file_id,
+                parsing_options=parsing_options,
+                enrichment_options=enrichment_options
+            )
+
+        if result.status != ParseStatus.SUCCESSFUL:
+            st.error(f"❌ Parsing failed: {result.status}")
+            st.stop()
+
+        full_text_output = ""
+        full_text_with_tables = ""
+        all_tables_json = {"tables": []}
+
+        # Process Pages
+        for i, chunk in enumerate(result.chunks, start=1):
+
+            st.header(f"📄 Page {i}")
+
+            page_text = chunk.content
+            soup = BeautifulSoup(page_text, "html.parser")
+            tables = soup.find_all("table")
+
+            # Remove tables before extracting text
+            for tbl in tables:
+                tbl.extract()
+
+            text_clean = soup.get_text("\n", strip=True)
+
+            full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
+            full_text_with_tables += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
+
+            st.subheader("📝 Extracted Text")
+            st.text(text_clean)
+
+            # Display tables
+            for t_index, table in enumerate(tables, start=1):
+                st.subheader(f"📊 Table {t_index}")
+
+                matrix = html_table_to_matrix(table)
+                if not matrix or len(matrix) < 2:
+                    st.write("_⚠️ Empty or malformed table_")
                     continue
-                except Exception as e:
-                    st.error(f"❌ Upload error for {uploaded_pdf.name}: {e}")
-                    continue
 
-            parsing_options = ParsingOptions(
-                chunking_strategy=ChunkingStrategy.PAGE,
-                table_output_mode=TableOutputMode.HTML,
-                signature_detection=False,
-                disable_layout_detection=True,
-            )
+                headers = fix_duplicate_headers(matrix[0])
+                df = pd.DataFrame(matrix[1:], columns=headers)
+                st.table(df)
 
-            enrichment_options = EnrichmentOptions(
-                figure_summarization=False,
-                table_summarization=False
-            )
+                readable_table = tabulate(matrix[1:], headers=headers, tablefmt="grid")
+                full_text_with_tables += readable_table + "\n\n"
 
-            with st.spinner("🔍 Parsing..."):
-                result = doc_ai.parse_and_wait(
-                    file_id,
-                    parsing_options=parsing_options,
-                    enrichment_options=enrichment_options
-                )
+                all_tables_json["tables"].append({
+                    "page": i,
+                    "table_index": t_index,
+                    "rows": html_table_to_objects(table),
+                })
 
-            if result.status != ParseStatus.SUCCESSFUL:
-                st.error(f"❌ Parsing failed: {result.status}")
-                continue
+        # Downloads
+        st.success("✅ Extraction completed!")
 
-            # Prepare file-specific output containers
-            text_only = ""
-            text_with_tables = ""
-            tables_json = {"tables": []}
+        st.download_button(
+            "📥 Download Full Text (TXT – no tables)",
+            data=full_text_output.encode("utf-8"),
+            file_name="document.txt",
+            mime="text/plain",
+        )
 
-            # Process pages
-            for i, chunk in enumerate(result.chunks, start=1):
+        st.download_button(
+            "📥 Download Text + Tables (Readable TXT)",
+            data=full_text_with_tables.encode("utf-8"),
+            file_name="document_with_tables.txt",
+            mime="text/plain",
+        )
 
-                st.subheader(f"📄 Page {i}")
+        st.download_button(
+            "📥 Download Tables (JSON)",
+            data=json.dumps(all_tables_json, indent=4).encode("utf-8"),
+            file_name="tables.json",
+            mime="application/json",
+        )
 
-                page_text = chunk.content
-                soup = BeautifulSoup(page_text, "html.parser")
-                tables = soup.find_all("table")
-
-                # remove HTML table for text extraction
-                for tbl in tables:
-                    tbl.extract()
-
-                text_clean = soup.get_text("\n", strip=True)
-
-                text_only += f"\n\n===== PAGE {i} =====\n{text_clean}\n"
-                text_with_tables += f"\n\n===== PAGE {i} =====\n{text_clean}\n"
-
-                st.text_area("Extracted Text", text_clean, height=150)
-
-                # process tables
-                for t_index, table in enumerate(tables, start=1):
-
-                    st.markdown(f"### 📊 Table {t_index}")
-                    matrix = html_table_to_matrix(table)
-
-                    if not matrix or len(matrix) < 2:
-                        st.write("_No usable table data_")
-                        continue
-
-                    headers = fix_duplicate_headers(matrix[0])
-                    df = pd.DataFrame(matrix[1:], columns=headers)
-                    st.dataframe(df)
-
-                    readable_table = tabulate(matrix[1:], headers=headers, tablefmt="grid")
-                    text_with_tables += readable_table + "\n\n"
-
-                    tables_json["tables"].append({
-                        "file": uploaded_pdf.name,
-                        "page": i,
-                        "table_index": t_index,
-                        "rows": html_table_to_objects(table)
-                    })
-
-            # ------------------ FILE DOWNLOADS ------------------
-
-            st.success(f"✅ Finished: {uploaded_pdf.name}")
-
-            st.download_button(
-                f"📥 Download Text (no tables) — {uploaded_pdf.name}",
-                data=text_only.encode("utf-8"),
-                file_name=f"{uploaded_pdf.name}_text.txt",
-                mime="text/plain"
-            )
-
-            st.download_button(
-                f"📥 Download Text + Tables — {uploaded_pdf.name}",
-                data=text_with_tables.encode("utf-8"),
-                file_name=f"{uploaded_pdf.name}_with_tables.txt",
-                mime="text/plain"
-            )
-
-            st.download_button(
-                f"📥 Download Tables JSON — {uploaded_pdf.name}",
-                data=json.dumps(tables_json, indent=4).encode("utf-8"),
-                file_name=f"{uploaded_pdf.name}_tables.json",
-                mime="application/json"
-            )
-
-        finally:
-            if os.path.exists(temp_pdf_path):
-                os.remove(temp_pdf_path)
+    finally:
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
 
 else:
-    st.warning("Upload one or more PDF files to continue.")
+    st.warning("Upload a PDF to continue.")

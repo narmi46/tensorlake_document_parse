@@ -18,7 +18,7 @@ import httpx
 
 
 # ------------------ FIXED API KEY ------------------
-API_KEY = "YOUR_FIXED_API_KEY_HERE"   # <-- insert your real key here
+API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"   # <-- insert your real key here
 
 
 # ------------------ Helpers ------------------

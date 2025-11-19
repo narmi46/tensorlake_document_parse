@@ -18,7 +18,7 @@ import httpx
 
 
 # ------------------ FIXED API KEY ------------------
-API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"   # <-- PUT YOUR KEY HERE
+API_KEY = "YOUR_FIXED_API_KEY_HERE"   # <-- insert your real key here
 
 
 # ------------------ Helpers ------------------
@@ -69,7 +69,7 @@ def html_table_to_objects(table):
             if h_low in ["2024", "year_2024"]:
                 entry["year_2024"] = clean_number(v)
 
-            elif h_low in ["2023", "as restated 2023", "year_2023"]:
+            elif h_low in ["2022023", "as restated 2023", "year_2023", "2023"]:
                 entry["year_2023"] = clean_number(v)
 
             elif h_low == "note":
@@ -87,36 +87,43 @@ def html_table_to_objects(table):
 # ------------------ Streamlit UI ------------------
 
 st.set_page_config(page_title="PDF Parser", layout="wide")
-st.title("📄 Multi-PDF Table & Text Extractor (Tensorlake DocumentAI)")
-st.write("Upload **one or many PDFs** and extract clean text + structured tables.")
 
-uploaded_pdfs = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
+st.title("📄 Multi-PDF Extractor (Tensorlake DocumentAI)")
+st.write("Upload **one or more PDFs** to extract clean text and structured tables automatically.")
 
+
+uploaded_pdfs = st.file_uploader(
+    "Upload PDF files",
+    type=["pdf"],
+    accept_multiple_files=True
+)
+
+
+# ------------------ MAIN PROCESSING ------------------
 
 if uploaded_pdfs:
 
-    # Initialize DocumentAI once
     doc_ai = DocumentAI(api_key=API_KEY)
 
     for uploaded_pdf in uploaded_pdfs:
 
         st.divider()
-        st.header(f"📌 Processing: {uploaded_pdf.name}")
+        st.header(f"📌 Processing File: `{uploaded_pdf.name}`")
 
-        # Save to temp
+        # Save file to temp
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_pdf.read())
             temp_pdf_path = tmp.name
 
         try:
-            with st.spinner("📤 Uploading..."):
+            with st.spinner("📤 Uploading to Tensorlake..."):
                 try:
                     file_id = doc_ai.upload(temp_pdf_path)
                 except httpx.HTTPStatusError as e:
-                    st.error(f"❌ Upload failed ({e.response.status_code}) for {uploaded_pdf.name}")
+                    st.error(f"❌ Upload failed ({e.response.status_code})")
                     continue
                 except Exception as e:
-                    st.error(f"❌ Upload error for {uploaded_pdf.name}: {e}")
+                    st.error(f"❌ Upload error: {e}")
                     continue
 
             parsing_options = ParsingOptions(
@@ -131,7 +138,7 @@ if uploaded_pdfs:
                 table_summarization=False
             )
 
-            with st.spinner("🔍 Parsing..."):
+            with st.spinner("🔍 Parsing PDF..."):
                 result = doc_ai.parse_and_wait(
                     file_id,
                     parsing_options=parsing_options,
@@ -142,12 +149,12 @@ if uploaded_pdfs:
                 st.error(f"❌ Parsing failed: {result.status}")
                 continue
 
-            # Prepare file-specific output containers
+            # Outputs per file
             text_only = ""
             text_with_tables = ""
             tables_json = {"tables": []}
 
-            # Process pages
+            # Process each page
             for i, chunk in enumerate(result.chunks, start=1):
 
                 st.subheader(f"📄 Page {i}")
@@ -156,33 +163,33 @@ if uploaded_pdfs:
                 soup = BeautifulSoup(page_text, "html.parser")
                 tables = soup.find_all("table")
 
-                # remove HTML table for text extraction
+                # Extract clean text
                 for tbl in tables:
                     tbl.extract()
 
-                text_clean = soup.get_text("\n", strip=True)
+                clean_text = soup.get_text("\n", strip=True)
 
-                text_only += f"\n\n===== PAGE {i} =====\n{text_clean}\n"
-                text_with_tables += f"\n\n===== PAGE {i} =====\n{text_clean}\n"
+                text_only += f"\n===== PAGE {i} =====\n{clean_text}\n"
+                text_with_tables += f"\n===== PAGE {i} =====\n{clean_text}\n"
 
-                st.text_area("Extracted Text", text_clean, height=150)
+                st.text_area("📝 Extracted Text", clean_text, height=150)
 
-                # process tables
+                # Process tables
                 for t_index, table in enumerate(tables, start=1):
 
                     st.markdown(f"### 📊 Table {t_index}")
-                    matrix = html_table_to_matrix(table)
 
+                    matrix = html_table_to_matrix(table)
                     if not matrix or len(matrix) < 2:
-                        st.write("_No usable table data_")
+                        st.write("_No valid table found_")
                         continue
 
                     headers = fix_duplicate_headers(matrix[0])
                     df = pd.DataFrame(matrix[1:], columns=headers)
                     st.dataframe(df)
 
-                    readable_table = tabulate(matrix[1:], headers=headers, tablefmt="grid")
-                    text_with_tables += readable_table + "\n\n"
+                    readable = tabulate(matrix[1:], headers=headers, tablefmt="grid")
+                    text_with_tables += readable + "\n\n"
 
                     tables_json["tables"].append({
                         "file": uploaded_pdf.name,
@@ -191,12 +198,11 @@ if uploaded_pdfs:
                         "rows": html_table_to_objects(table)
                     })
 
-            # ------------------ FILE DOWNLOADS ------------------
-
-            st.success(f"✅ Finished: {uploaded_pdf.name}")
+            # ------------------ DOWNLOAD BUTTONS ------------------
+            st.success(f"✔ Completed: {uploaded_pdf.name}")
 
             st.download_button(
-                f"📥 Download Text (no tables) — {uploaded_pdf.name}",
+                f"📥 Download Text Only — {uploaded_pdf.name}",
                 data=text_only.encode("utf-8"),
                 file_name=f"{uploaded_pdf.name}_text.txt",
                 mime="text/plain"
@@ -217,8 +223,9 @@ if uploaded_pdfs:
             )
 
         finally:
+            # Cleanup temp
             if os.path.exists(temp_pdf_path):
                 os.remove(temp_pdf_path)
 
 else:
-    st.warning("Upload one or more PDF files to continue.")
+    st.info("Upload one or more PDF files to begin.")

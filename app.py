@@ -7,16 +7,16 @@ from tensorlake.documentai import (
     ChunkingStrategy,
     TableOutputMode,
     TableParsingFormat,
-    OcrPipelineProvider
+    OcrPipelineProvider,
 )
 
 import json
 from bs4 import BeautifulSoup
 from tabulate import tabulate
-import os
 import tempfile
 import pandas as pd
 import httpx
+import os
 
 
 # ------------------ Helpers ------------------
@@ -32,7 +32,7 @@ def fix_duplicate_headers(headers):
     seen = {}
     fixed = []
     for h in headers:
-        key = h if h.strip() != "" else "col"
+        key = h if h.strip() else "col"
         if key not in seen:
             seen[key] = 1
             fixed.append(key)
@@ -44,11 +44,7 @@ def fix_duplicate_headers(headers):
 
 def html_table_to_matrix(table):
     rows = table.find_all("tr")
-    matrix = []
-    for row in rows:
-        cells = row.find_all(["td", "th"])
-        matrix.append([cell.get_text(strip=True) for cell in cells])
-    return matrix
+    return [[cell.get_text(strip=True) for cell in row.find_all(["td", "th"])] for row in rows]
 
 
 def html_table_to_objects(table):
@@ -66,13 +62,10 @@ def html_table_to_objects(table):
 
             if h_low in ["2024", "year_2024"]:
                 entry["year_2024"] = clean_number(v)
-
             elif h_low in ["2023", "as restated 2023", "year_2023"]:
                 entry["year_2023"] = clean_number(v)
-
             elif h_low == "note":
                 entry["note"] = clean_number(v) if v else None
-
             else:
                 entry["name"] = v
 
@@ -86,63 +79,59 @@ def html_table_to_objects(table):
 
 st.set_page_config(page_title="PDF Parser", layout="wide")
 st.title("📄 PDF Extractor (Tensorlake DocumentAI)")
-st.write("Upload a PDF and extract **clean text + tables** using Tensorlake.")
 
-api_key = st.text_input("🔑 Enter Tensorlake API Key", type="password")
-uploaded_pdf = st.file_uploader("Upload PDF", type=["pdf"])
+st.header("⚙️ Parsing Configuration")
 
-if uploaded_pdf and api_key:
+# OCR model configuration
+ocr_choice = st.radio(
+    "OCR Model",
+    ["model01", "model02", "model03"],
+    index=1
+)
+
+# **Correct mapping**
+ocr_map = {
+    "model01": OcrPipelineProvider.TENSORLAKE01,
+    "model02": OcrPipelineProvider.TENSORLAKE02,
+    "model03": OcrPipelineProvider.TENSORLAKE03,
+}
+
+# Table output mode
+table_output_choice = st.selectbox("Table Output Mode", list(TableOutputMode))
+
+# Table parsing format
+table_parsing_choice = st.selectbox("Table Parsing Format", list(TableParsingFormat))
+
+# Chunking
+chunking_choice = st.selectbox("Chunking Strategy", list(ChunkingStrategy))
+
+# Toggles
+cross_page_headers = st.checkbox("Cross-page Header Detection", value=False)
+signature_detection = st.checkbox("Signature Detection", value=False)
+remove_strike = st.checkbox("Remove Strikethrough Lines", value=False)
+skew_detection = st.checkbox("Enable Skew Detection", value=False)
+disable_layout_detection = st.checkbox("Disable Layout Detection", value=False)
+
+st.divider()
+
+# ------------------ API key + PDF input ------------------
+
+st.header("📄 Upload PDF")
+
+api_key = st.text_input("🔑 Tensorlake API Key", type="password")
+uploaded_pdf = st.file_uploader("Upload PDF File", type=["pdf"])
+
+run_button = st.button("🚀 Start Parsing")
+
+if run_button:
+
+    if not api_key or not uploaded_pdf:
+        st.error("Please provide **both API Key and PDF file**.")
+        st.stop()
 
     if not api_key.startswith("tl_apiKey_"):
         st.error("❌ Invalid API key format.")
         st.stop()
-
-    # -------------------------------------------
-    # NEW SETTINGS UI (matches your screenshot)
-    # -------------------------------------------
-
-    st.header("⚙️ Parsing Configuration")
-
-    # OCR Model
-    ocr_choice = st.radio(
-        "OCR model",
-        ["model01", "model02", "model03"],
-        index=1
-    )
-
-    ocr_map = {
-        "model01": OcrPipelineProvider.MODEL01,
-        "model02": OcrPipelineProvider.MODEL02,
-        "model03": OcrPipelineProvider.MODEL03
-    }
-
-    # Table Output Mode
-    table_output_choice = st.selectbox(
-        "Table output mode",
-        list(TableOutputMode)
-    )
-
-    # Table Parsing Format (rarely used, but available)
-    table_parsing_choice = st.selectbox(
-        "Table parsing format (internal format)",
-        list(TableParsingFormat)
-    )
-
-    # Chunking strategy
-    chunking_choice = st.selectbox(
-        "Chunking strategy",
-        list(ChunkingStrategy)
-    )
-
-    # Toggles
-    cross_page_headers = st.checkbox("Cross page header detection", value=False)
-    signature_detection = st.checkbox("Signature detection", value=False)
-    remove_strike = st.checkbox("Remove strikethrough lines", value=False)
-    skew_detection = st.checkbox("Enable skew detection", value=False)
-    disable_layout_detection = st.checkbox("Disable layout detection", value=False)
-
-
-    st.info("Processing your PDF...")
 
     # Save temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -159,10 +148,7 @@ if uploaded_pdf and api_key:
                 st.error(f"❌ Upload failed: {e}")
                 st.stop()
 
-        # -------------------------------------------
-        # Build ParsingOptions with ALL new fields
-        # -------------------------------------------
-
+        # Build ParsingOptions
         parsing_options = ParsingOptions(
             chunking_strategy=chunking_choice,
             table_output_mode=table_output_choice,
@@ -172,12 +158,12 @@ if uploaded_pdf and api_key:
             signature_detection=signature_detection,
             remove_strikethrough_lines=remove_strike,
             skew_detection=skew_detection,
-            disable_layout_detection=disable_layout_detection
+            disable_layout_detection=disable_layout_detection,
         )
 
         enrichment_options = EnrichmentOptions(
             figure_summarization=False,
-            table_summarization=False
+            table_summarization=False,
         )
 
         with st.spinner("🔍 Parsing PDF..."):
@@ -194,6 +180,8 @@ if uploaded_pdf and api_key:
         full_text_output = ""
         full_text_with_tables = ""
         all_tables_json = {"tables": []}
+
+        # -------- Page Processing -------- #
 
         for i, chunk in enumerate(result.chunks, start=1):
             st.header(f"📄 Page {i}")
@@ -255,6 +243,3 @@ if uploaded_pdf and api_key:
     finally:
         if os.path.exists(temp_pdf_path):
             os.remove(temp_pdf_path)
-
-else:
-    st.warning("Upload a PDF + enter API key to continue.")

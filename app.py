@@ -18,13 +18,18 @@ import pandas as pd
 import httpx
 import os
 
+# ------------------ CONFIG ------------------
+
+# 🔑 Built-in API key – replace this with your real key
+API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"
+
 
 # ------------------ Helpers ------------------
 
 def clean_number(value):
     try:
         return int(value.replace(",", ""))
-    except:
+    except Exception:
         return value
 
 
@@ -74,6 +79,55 @@ def html_table_to_objects(table):
     return objects
 
 
+# ------------------ Session State ------------------
+
+if "results" not in st.session_state:
+    st.session_state["results"] = None
+
+
+# ------------------ Rendering ------------------
+
+def render_results(results):
+    """Render pages, tables, and download buttons from cached results."""
+    if not results:
+        return
+
+    for page in results["pages"]:
+        st.header(f"📄 Page {page['page_number']}")
+
+        st.subheader("📝 Extracted Text")
+        # Use markdown so tables render nicely (fixes alignment!)
+        st.markdown(page["text_display"])
+
+        for t_index, table in enumerate(page["tables"], start=1):
+            st.subheader(f"📊 Table {t_index}")
+            df = pd.DataFrame(table["rows"], columns=table["headers"])
+            st.table(df)
+
+    st.success("✅ Extraction complete!")
+
+    # Download buttons reuse cached text/json so they survive reruns
+    st.download_button(
+        "📥 Download Text (No Tables)",
+        results["full_text_output"].encode("utf-8"),
+        file_name="document.txt",
+        mime="text/plain",
+    )
+
+    st.download_button(
+        "📥 Download Text + Tables",
+        results["full_text_with_tables"].encode("utf-8"),
+        file_name="document_with_tables.txt",
+        mime="text/plain",
+    )
+
+    st.download_button(
+        "📥 Download Tables JSON",
+        json.dumps(results["all_tables_json"], indent=4).encode("utf-8"),
+        file_name="tables.json",
+        mime="application/json",
+    )
+
 
 # ------------------ Streamlit UI ------------------
 
@@ -86,10 +140,9 @@ st.header("⚙️ Parsing Configuration")
 ocr_choice = st.radio(
     "OCR Model",
     ["model01", "model02", "model03"],
-    index=1
+    index=1,
 )
 
-# **Correct mapping**
 ocr_map = {
     "model01": OcrPipelineProvider.TENSORLAKE01,
     "model02": OcrPipelineProvider.TENSORLAKE02,
@@ -114,23 +167,28 @@ disable_layout_detection = st.checkbox("Disable Layout Detection", value=False)
 
 st.divider()
 
-# ------------------ API key + PDF input ------------------
+# ------------------ PDF input ------------------
 
 st.header("📄 Upload PDF")
 
-api_key = st.text_input("🔑 Tensorlake API Key", type="password")
 uploaded_pdf = st.file_uploader("Upload PDF File", type=["pdf"])
 
 run_button = st.button("🚀 Start Parsing")
 
-if run_button:
+# ------------------ Main Logic ------------------
 
-    if not api_key or not uploaded_pdf:
-        st.error("Please provide **both API Key and PDF file**.")
+# If we already have results in session, render them (this keeps UI after downloads)
+if st.session_state["results"] and not run_button:
+    render_results(st.session_state["results"])
+
+if run_button:
+    # Basic API-key sanity check
+    if not API_KEY or API_KEY == "tl_apiKey_PUT_YOUR_REAL_KEY_HERE":
+        st.error("❌ Please set your API key in the code (API_KEY constant at top of file).")
         st.stop()
 
-    if not api_key.startswith("tl_apiKey_"):
-        st.error("❌ Invalid API key format.")
+    if not uploaded_pdf:
+        st.error("Please upload a PDF file.")
         st.stop()
 
     # Save temp file
@@ -139,7 +197,7 @@ if run_button:
         temp_pdf_path = tmp.name
 
     try:
-        doc_ai = DocumentAI(api_key=api_key)
+        doc_ai = DocumentAI(api_key=API_KEY)
 
         with st.spinner("📤 Uploading file..."):
             try:
@@ -148,7 +206,6 @@ if run_button:
                 st.error(f"❌ Upload failed: {e}")
                 st.stop()
 
-        # Build ParsingOptions
         parsing_options = ParsingOptions(
             chunking_strategy=chunking_choice,
             table_output_mode=table_output_choice,
@@ -170,75 +227,77 @@ if run_button:
             result = doc_ai.parse_and_wait(
                 file_id,
                 parsing_options=parsing_options,
-                enrichment_options=enrichment_options
+                enrichment_options=enrichment_options,
             )
 
         if result.status != ParseStatus.SUCCESSFUL:
             st.error(f"❌ Parsing failed: {result.status}")
             st.stop()
 
+        # Build cached results structure
         full_text_output = ""
         full_text_with_tables = ""
         all_tables_json = {"tables": []}
-
-        # -------- Page Processing -------- #
+        pages = []
 
         for i, chunk in enumerate(result.chunks, start=1):
-            st.header(f"📄 Page {i}")
+            raw_markdown = chunk.content  # original markdown/HTML from Tensorlake
 
-            soup = BeautifulSoup(chunk.content, "html.parser")
+            # Parse with BeautifulSoup for text-only + tables
+            soup = BeautifulSoup(raw_markdown, "html.parser")
             tables = soup.find_all("table")
 
+            # Remove tables to get clean "text-only"
             for t in tables:
                 t.extract()
 
-            text_clean = soup.get_text("\n", strip=True)
+            text_plain = soup.get_text("\n", strip=True)
 
-            full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
-            full_text_with_tables += f"\n\n===== PAGE {i} =====\n\n{text_clean}\n\n"
+            full_text_output += f"\n\n===== PAGE {i} =====\n\n{text_plain}\n\n"
+            full_text_with_tables += f"\n\n===== PAGE {i} =====\n\n{text_plain}\n\n"
 
-            st.subheader("📝 Extracted Text")
-            st.text(text_clean)
+            page_tables = []
 
             for t_index, table in enumerate(tables, start=1):
-                st.subheader(f"📊 Table {t_index}")
-
                 matrix = html_table_to_matrix(table)
                 if not matrix or len(matrix) < 2:
-                    st.write("_⚠️ Empty table_")
                     continue
 
                 headers = fix_duplicate_headers(matrix[0])
-                df = pd.DataFrame(matrix[1:], columns=headers)
-                st.table(df)
+                rows = matrix[1:]
 
-                full_text_with_tables += tabulate(matrix[1:], headers=headers, tablefmt="grid") + "\n\n"
+                readable = tabulate(rows, headers=headers, tablefmt="grid")
+                full_text_with_tables += readable + "\n\n"
 
-                all_tables_json["tables"].append({
-                    "page": i,
-                    "table_index": t_index,
-                    "rows": html_table_to_objects(table),
-                })
+                all_tables_json["tables"].append(
+                    {
+                        "page": i,
+                        "table_index": t_index,
+                        "rows": html_table_to_objects(table),
+                    }
+                )
 
-        st.success("✅ Extraction complete!")
+                page_tables.append({"headers": headers, "rows": rows})
 
-        st.download_button(
-            "📥 Download Text (No Tables)",
-            full_text_output.encode(),
-            file_name="document.txt"
-        )
+            pages.append(
+                {
+                    "page_number": i,
+                    "text_display": raw_markdown,  # used in UI (tables render nicely)
+                    "text_plain": text_plain,
+                    "tables": page_tables,
+                }
+            )
 
-        st.download_button(
-            "📥 Download Text + Tables",
-            full_text_with_tables.encode(),
-            file_name="document_with_tables.txt"
-        )
+        # Cache everything in session_state so downloads don't wipe the UI
+        st.session_state["results"] = {
+            "pages": pages,
+            "full_text_output": full_text_output,
+            "full_text_with_tables": full_text_with_tables,
+            "all_tables_json": all_tables_json,
+        }
 
-        st.download_button(
-            "📥 Download Tables JSON",
-            json.dumps(all_tables_json, indent=4).encode(),
-            file_name="tables.json"
-        )
+        # Render immediately for this run
+        render_results(st.session_state["results"])
 
     finally:
         if os.path.exists(temp_pdf_path):

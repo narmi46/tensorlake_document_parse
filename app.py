@@ -21,7 +21,7 @@ import os
 # ------------------ CONFIG ------------------
 
 # 🔑 Built-in API key – replace this with your real key
-API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"
+API_KEY = "tl_apiKey_BgHJLTLpHcTKMzKqKw7C9_KmQaNjleHac4ncZjwyiDwfazkUCqnZ"
 
 
 # ------------------ Helpers ------------------

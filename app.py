@@ -169,24 +169,30 @@ def render_results(results):
 # Streamlit UI + Detailed Descriptions
 # ===================================================
 
+# ===================================================
+# Streamlit UI With Inline Descriptions
+# ===================================================
+
 st.set_page_config(page_title="PDF Parser", layout="wide")
 st.title("📄 PDF Extractor (Tensorlake DocumentAI)")
 
 st.header("⚙️ Parsing Configuration")
 
-# ---------- OCR Model ----------
-with st.expander("ℹ️ About OCR Models"):
-    st.markdown("""
-### **OCR Model Options**
-- **model01** → Balanced OCR, good general accuracy.
-- **model02** → ⭐ *Recommended.* Best for tables and financial docs.
-- **model03** → Fastest OCR, good for large batch processing.
-    """)
+
+# ============================
+# OCR Model (with inline help)
+# ============================
+st.markdown("### OCR Model")
+st.write("""
+- **model01** → Balanced OCR, good general accuracy  
+- **model02** → ⭐ Recommended. Best accuracy for tables & financial documents  
+- **model03** → Fastest OCR, ideal for large batches  
+""")
 
 ocr_choice = st.radio(
-    "OCR Model",
+    "Select OCR Model:",
     ["model01", "model02", "model03"],
-    index=1,  # Default model02
+    index=1  # default: model02
 )
 
 ocr_map = {
@@ -196,70 +202,78 @@ ocr_map = {
 }
 
 
-# ---------- Table Output Mode ----------
-with st.expander("ℹ️ About Table Output Modes"):
-    st.markdown("""
-### **Table Output Mode**
-How extracted tables are returned:
-- **MARKDOWN** → Clean readable table (recommended)
-- **TSV** → Tab-separated values
-- **HTML** → Preserves formatting exactly
-    """)
+# ============================
+# Table Output Mode
+# ============================
+st.markdown("### Table Output Mode")
+st.write("""
+- **MARKDOWN** → Clean and readable (recommended)  
+- **HTML** → Full HTML table  
+- **TSV** → Export-friendly  
+""")
 
 table_output_choice = st.selectbox(
-    "Table Output Mode",
+    "Select Table Output Mode:",
     list(TableOutputMode),
     index=list(TableOutputMode).index(TableOutputMode.MARKDOWN)
 )
 
 
-# ---------- Table Parsing Format ----------
-with st.expander("ℹ️ Table Parsing Format Explained"):
-    st.markdown("""
-### **Table Parsing Format**
-- **TSR** → Advanced ML table detection (*Best*)
-- **BASIC** → Simple row-by-row parsing
-- **DETECT** → Structure detection optimized for layout-heavy PDFs
-    """)
+# ============================
+# Table Parsing Format (Corrected)
+# ============================
+st.markdown("### Table Parsing Format")
+st.write("""
+- **TSR** → Tensorlake Structured Recognition (best for most PDFs)  
+- **VLM** → Vision-Language Model parsing (good for complex layouts)  
+""")
+
+valid_parsing_modes = [
+    TableParsingFormat.TSR,
+    TableParsingFormat.VLM
+]
 
 table_parsing_choice = st.selectbox(
-    "Table Parsing Format",
-    list(TableParsingFormat),
-    index=list(TableParsingFormat).index(TableParsingFormat.TSR)
+    "Select Table Parsing Format:",
+    valid_parsing_modes,
+    index=0  # default: TSR
 )
 
 
-# ---------- Chunking Strategy ----------
-with st.expander("ℹ️ Chunking Strategies"):
-    st.markdown("""
-### **Chunking Strategy**
-- **PAGE** → Recommended for PDFs
-- **SLIDING_WINDOW** → Good for dense text
-- **MULTICOLUMN** → For newspaper-style layouts
-    """)
+# ============================
+# Chunking Strategy
+# ============================
+st.markdown("### Chunking Strategy")
+st.write("""
+- **PAGE** → Recommended. Processes each page independently  
+- **SLIDING_WINDOW** → Better for dense paragraphs  
+- **MULTICOLUMN** → For magazines, 2-column documents  
+""")
 
 chunking_choice = st.selectbox(
-    "Chunking Strategy",
+    "Select Chunking Strategy:",
     list(ChunkingStrategy),
     index=list(ChunkingStrategy).index(ChunkingStrategy.PAGE)
 )
 
 
-# ---------- Advanced Options ----------
-with st.expander("ℹ️ Advanced Options Explained"):
-    st.markdown("""
-### **Advanced Options**
-- **Cross-page Header Detection**: Keeps table headers when tables span pages  
-- **Signature Detection**: Detects signatures  
-- **Remove Strikethrough**: Removes crossed-out text  
-- **Enable Skew Detection**: Straightens tilted scans *(Recommended ON)*  
-- **Disable Layout Detection**: For simple PDFs only  
-    """)
+# ============================
+# Advanced Options (Inline Help)
+# ============================
+
+st.markdown("### Advanced Options")
+st.write("""
+- **Cross-page Header Detection** → Detect table headers across pages  
+- **Signature Detection** → Extract signature blocks  
+- **Remove Strikethrough Lines** → Ignores crossed-out text  
+- **Enable Skew Detection** → Auto-straighten rotated scans (**recommended on**)  
+- **Disable Layout Detection** → Turns off layout detection (only for simple PDFs)  
+""")
 
 cross_page_headers = st.checkbox("Cross-page Header Detection", value=False)
 signature_detection = st.checkbox("Signature Detection", value=False)
 remove_strike = st.checkbox("Remove Strikethrough Lines", value=False)
-skew_detection = st.checkbox("Enable Skew Detection", value=True)
+skew_detection = st.checkbox("Enable Skew Detection", value=True)  # Default ON
 disable_layout_detection = st.checkbox("Disable Layout Detection", value=False)
 
 st.divider()

@@ -21,7 +21,7 @@ import os
 # ------------------ CONFIG ------------------
 
 # 🔑 Built-in API key – replace this with your real key
-API_KEY = "tl_apiKey_BgHJLTLpHcTKMzKqKw7C9_KmQaNjleHac4ncZjwyiDwfazkUCqnZ"
+API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"
 
 
 # ------------------ Helpers ------------------
@@ -199,12 +199,37 @@ if run_button:
     try:
         doc_ai = DocumentAI(api_key=API_KEY)
 
-        with st.spinner("📤 Uploading file..."):
-            try:
-                file_id = doc_ai.upload(temp_pdf_path)
-            except httpx.HTTPStatusError as e:
-                st.error(f"❌ Upload failed: {e}")
-                st.stop()
+    def upload_file_v2(path):
+        url = "https://api.tensorlake.ai/documents/v2/files"
+    
+        with open(path, "rb") as f:
+            files = {
+                "file_bytes": ("file.pdf", f, "application/pdf")
+            }
+            data = {
+                "labels": json.dumps({"source": "streamlit"})
+            }
+    
+            r = httpx.put(
+                url,
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                files=files,
+                data=data
+            )
+    
+        if r.status_code != 200:
+            raise Exception(f"Upload Error {r.status_code}: {r.text}")
+    
+        return r.json()["file_id"]
+
+            with st.spinner("📤 Uploading file..."):
+        try:
+            file_id = upload_file_v2(temp_pdf_path)
+        except Exception as e:
+            st.error(f"❌ Upload failed: {e}")
+            st.stop()
+
+
 
         parsing_options = ParsingOptions(
             chunking_strategy=chunking_choice,

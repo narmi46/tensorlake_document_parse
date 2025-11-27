@@ -18,13 +18,49 @@ import pandas as pd
 import httpx
 import os
 
-# ------------------ CONFIG ------------------
 
-# 🔑 Built-in API key – replace this with your real key
+
+# ===================================================
+# 🔑 CONFIG — Insert your REAL Tensorlake API key here
+# ===================================================
+
 API_KEY = "tl_apiKey_kqzrz7zrf97fHr7mK8CRh_TsyhVykSJ6XzbQp9LcY_y2Nk2m4-u3"
 
 
-# ------------------ Helpers ------------------
+
+# ===================================================
+# 🔧 FIXED — Correct Tensorlake v2 Upload Function
+# ===================================================
+
+def upload_file_v2(path):
+    """
+    Uploads a file to Tensorlake using the correct v2 API:
+    PUT /documents/v2/files
+    """
+    url = "https://api.tensorlake.ai/documents/v2/files"
+
+    with open(path, "rb") as f:
+        files = {"file_bytes": ("file.pdf", f, "application/pdf")}
+        data = {"labels": json.dumps({"source": "streamlit_app"})}
+
+        response = httpx.put(
+            url,
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            files=files,
+            data=data,
+            timeout=30
+        )
+
+    if response.status_code != 200:
+        raise Exception(f"Upload failed {response.status_code}: {response.text}")
+
+    return response.json()["file_id"]
+
+
+
+# ===================================================
+# Helper Functions (unchanged)
+# ===================================================
 
 def clean_number(value):
     try:
@@ -79,16 +115,21 @@ def html_table_to_objects(table):
     return objects
 
 
-# ------------------ Session State ------------------
+
+# ===================================================
+# Streamlit Session State
+# ===================================================
 
 if "results" not in st.session_state:
     st.session_state["results"] = None
 
 
-# ------------------ Rendering ------------------
+
+# ===================================================
+# Rendering Function
+# ===================================================
 
 def render_results(results):
-    """Render pages, tables, and download buttons from cached results."""
     if not results:
         return
 
@@ -96,7 +137,6 @@ def render_results(results):
         st.header(f"📄 Page {page['page_number']}")
 
         st.subheader("📝 Extracted Text")
-        # Use markdown so tables render nicely (fixes alignment!)
         st.markdown(page["text_display"])
 
         for t_index, table in enumerate(page["tables"], start=1):
@@ -104,9 +144,9 @@ def render_results(results):
             df = pd.DataFrame(table["rows"], columns=table["headers"])
             st.table(df)
 
+    # Downloads
     st.success("✅ Extraction complete!")
 
-    # Download buttons reuse cached text/json so they survive reruns
     st.download_button(
         "📥 Download Text (No Tables)",
         results["full_text_output"].encode("utf-8"),
@@ -129,14 +169,16 @@ def render_results(results):
     )
 
 
-# ------------------ Streamlit UI ------------------
+
+# ===================================================
+# Streamlit UI
+# ===================================================
 
 st.set_page_config(page_title="PDF Parser", layout="wide")
 st.title("📄 PDF Extractor (Tensorlake DocumentAI)")
 
 st.header("⚙️ Parsing Configuration")
 
-# OCR model configuration
 ocr_choice = st.radio(
     "OCR Model",
     ["model01", "model02", "model03"],
@@ -149,16 +191,10 @@ ocr_map = {
     "model03": OcrPipelineProvider.TENSORLAKE03,
 }
 
-# Table output mode
 table_output_choice = st.selectbox("Table Output Mode", list(TableOutputMode))
-
-# Table parsing format
 table_parsing_choice = st.selectbox("Table Parsing Format", list(TableParsingFormat))
-
-# Chunking
 chunking_choice = st.selectbox("Chunking Strategy", list(ChunkingStrategy))
 
-# Toggles
 cross_page_headers = st.checkbox("Cross-page Header Detection", value=False)
 signature_detection = st.checkbox("Signature Detection", value=False)
 remove_strike = st.checkbox("Remove Strikethrough Lines", value=False)
@@ -167,24 +203,28 @@ disable_layout_detection = st.checkbox("Disable Layout Detection", value=False)
 
 st.divider()
 
-# ------------------ PDF input ------------------
 
-st.header("📄 Upload PDF")
+
+# ===================================================
+# PDF Upload Section
+# ===================================================
 
 uploaded_pdf = st.file_uploader("Upload PDF File", type=["pdf"])
-
 run_button = st.button("🚀 Start Parsing")
 
-# ------------------ Main Logic ------------------
-
-# If we already have results in session, render them (this keeps UI after downloads)
 if st.session_state["results"] and not run_button:
     render_results(st.session_state["results"])
 
+
+
+# ===================================================
+# Main Logic
+# ===================================================
+
 if run_button:
-    # Basic API-key sanity check
-    if not API_KEY or API_KEY == "tl_apiKey_PUT_YOUR_REAL_KEY_HERE":
-        st.error("❌ Please set your API key in the code (API_KEY constant at top of file).")
+
+    if not API_KEY or API_KEY.startswith("YOUR_REAL"):
+        st.error("❌ Please enter a valid Tensorlake API Key at the top of the code.")
         st.stop()
 
     if not uploaded_pdf:
@@ -197,39 +237,21 @@ if run_button:
         temp_pdf_path = tmp.name
 
     try:
+        # ===========================
+        # UPLOAD PDF (fixed)
+        # ===========================
+        with st.spinner("📤 Uploading file..."):
+            try:
+                file_id = upload_file_v2(temp_pdf_path)
+            except Exception as e:
+                st.error(f"❌ Upload failed: {e}")
+                st.stop()
+
+        # ===========================
+        # PARSE PDF
+        # ===========================
+
         doc_ai = DocumentAI(api_key=API_KEY)
-
-    def upload_file_v2(path):
-        url = "https://api.tensorlake.ai/documents/v2/files"
-    
-        with open(path, "rb") as f:
-            files = {
-                "file_bytes": ("file.pdf", f, "application/pdf")
-            }
-            data = {
-                "labels": json.dumps({"source": "streamlit"})
-            }
-    
-            r = httpx.put(
-                url,
-                headers={"Authorization": f"Bearer {API_KEY}"},
-                files=files,
-                data=data
-            )
-    
-        if r.status_code != 200:
-            raise Exception(f"Upload Error {r.status_code}: {r.text}")
-    
-        return r.json()["file_id"]
-
-            with st.spinner("📤 Uploading file..."):
-        try:
-            file_id = upload_file_v2(temp_pdf_path)
-        except Exception as e:
-            st.error(f"❌ Upload failed: {e}")
-            st.stop()
-
-
 
         parsing_options = ParsingOptions(
             chunking_strategy=chunking_choice,
@@ -250,7 +272,7 @@ if run_button:
 
         with st.spinner("🔍 Parsing PDF..."):
             result = doc_ai.parse_and_wait(
-                file_id,
+                file_id=file_id,
                 parsing_options=parsing_options,
                 enrichment_options=enrichment_options,
             )
@@ -259,20 +281,21 @@ if run_button:
             st.error(f"❌ Parsing failed: {result.status}")
             st.stop()
 
-        # Build cached results structure
+        # ===========================
+        # BUILD RESULT STRUCTURES
+        # ===========================
+
         full_text_output = ""
         full_text_with_tables = ""
         all_tables_json = {"tables": []}
         pages = []
 
         for i, chunk in enumerate(result.chunks, start=1):
-            raw_markdown = chunk.content  # original markdown/HTML from Tensorlake
-
-            # Parse with BeautifulSoup for text-only + tables
+            raw_markdown = chunk.content
             soup = BeautifulSoup(raw_markdown, "html.parser")
             tables = soup.find_all("table")
 
-            # Remove tables to get clean "text-only"
+            # Remove tables for clean text
             for t in tables:
                 t.extract()
 
@@ -294,26 +317,22 @@ if run_button:
                 readable = tabulate(rows, headers=headers, tablefmt="grid")
                 full_text_with_tables += readable + "\n\n"
 
-                all_tables_json["tables"].append(
-                    {
-                        "page": i,
-                        "table_index": t_index,
-                        "rows": html_table_to_objects(table),
-                    }
-                )
+                all_tables_json["tables"].append({
+                    "page": i,
+                    "table_index": t_index,
+                    "rows": html_table_to_objects(table),
+                })
 
                 page_tables.append({"headers": headers, "rows": rows})
 
-            pages.append(
-                {
-                    "page_number": i,
-                    "text_display": raw_markdown,  # used in UI (tables render nicely)
-                    "text_plain": text_plain,
-                    "tables": page_tables,
-                }
-            )
+            pages.append({
+                "page_number": i,
+                "text_display": raw_markdown,
+                "text_plain": text_plain,
+                "tables": page_tables,
+            })
 
-        # Cache everything in session_state so downloads don't wipe the UI
+        # Cache results
         st.session_state["results"] = {
             "pages": pages,
             "full_text_output": full_text_output,
@@ -321,7 +340,6 @@ if run_button:
             "all_tables_json": all_tables_json,
         }
 
-        # Render immediately for this run
         render_results(st.session_state["results"])
 
     finally:
